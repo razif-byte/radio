@@ -529,6 +529,27 @@ body {
   color: #fff;
 }
 
+.btn-airspy {
+  border-color: #0284c7;
+}
+
+.btn-airspy:hover {
+  background: #0284c7;
+  border-color: #38bdf8;
+}
+
+.filter-box {
+  background: #0a0e1a;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.active-highlight {
+  border-color: #0284c7 !important;
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.25);
+}
+
 /* S-METER */
 .s-meter-scale {
   display: flex;

@@ -10,6 +10,8 @@ export interface SpatialRadioCallbacks {
   onScanToggle: () => void;
   onModeSelect: (mode: any) => void;
   onBandSelect: (band: any) => void;
+  onAnrToggle?: () => void;
+  onNotchToggle?: () => void;
 }
 
 export class SpatialRadioScene extends xb.Script {
@@ -26,9 +28,12 @@ export class SpatialRadioScene extends xb.Script {
   private freqText?: xb.UIText;
   private sMeterText?: xb.UIText;
   private bandModeText?: xb.UIText;
+  private dspFilterText?: xb.UIText;
   private statusText?: xb.UIText;
   private playButton?: xb.UIButton;
   private scanButton?: xb.UIButton;
+  private anrButton?: xb.UIButton;
+  private notchButton?: xb.UIButton;
 
   constructor(
     initialState: ReceiverState,
@@ -116,6 +121,15 @@ export class SpatialRadioScene extends xb.Script {
       },
     });
 
+    this.dspFilterText = new xb.UIText({
+      text: `DSP: ANR ${this.state.anrEnabled ? '[AKTIF]' : '[PADAM]'} | NOTCH ${this.state.notchEnabled ? `[${this.state.notchFreqHz}Hz]` : '[PADAM]'} | BPF Q:${this.state.bpfQ.toFixed(1)}`,
+      style: {
+        fontSize: 13,
+        color: '#38bdf8',
+        textAlign: 'center',
+      },
+    });
+
     this.statusText = new xb.UIText({
       text: this.state.isPlaying ? 'STATUS: RECEIVING RF STREAM' : 'STATUS: STANDBY (PRESS START)',
       style: {
@@ -197,6 +211,25 @@ export class SpatialRadioScene extends xb.Script {
       });
     });
 
+    // Advanced DSP filter toggle buttons
+    this.anrButton = new xb.UIButton({
+      label: `ANR: ${this.state.anrEnabled ? 'ON' : 'OFF'}`,
+      style: {
+        flexGrow: 1,
+        backgroundColor: this.state.anrEnabled ? '#059669' : '#1e293b',
+      },
+      onClick: () => this.callbacks.onAnrToggle?.(),
+    });
+
+    this.notchButton = new xb.UIButton({
+      label: `NOTCH: ${this.state.notchEnabled ? 'ON' : 'OFF'}`,
+      style: {
+        flexGrow: 1,
+        backgroundColor: this.state.notchEnabled ? '#d97706' : '#1e293b',
+      },
+      onClick: () => this.callbacks.onNotchToggle?.(),
+    });
+
     const mainCard = new xb.UICard({
       size: { width: 0.88, height: 'auto' },
       manipulation: true,
@@ -219,6 +252,7 @@ export class SpatialRadioScene extends xb.Script {
         this.freqText,
         this.bandModeText,
         this.sMeterText,
+        this.dspFilterText,
         spectrumImage,
         waterfallImage,
         new xb.UIPanel({
@@ -228,6 +262,10 @@ export class SpatialRadioScene extends xb.Script {
         new xb.UIPanel({
           style: { width: '100%', flexDirection: 'row', gap: 8 },
           children: [tuneDownButton, tuneUpButton, this.playButton, this.scanButton],
+        }),
+        new xb.UIPanel({
+          style: { width: '100%', flexDirection: 'row', gap: 8 },
+          children: [this.anrButton, this.notchButton],
         }),
         this.statusText,
       ],
@@ -255,6 +293,17 @@ export class SpatialRadioScene extends xb.Script {
     }
     if (this.sMeterText) {
       this.sMeterText.text = `S-METER: S${this.state.sMeterValue} (${this.state.signalStrengthDbm} dBm) | SNR: ${this.state.snrDb} dB`;
+    }
+    if (this.dspFilterText) {
+      this.dspFilterText.text = `DSP: ANR ${this.state.anrEnabled ? '[ON]' : '[OFF]'} | NOTCH ${this.state.notchEnabled ? `[${this.state.notchFreqHz}Hz]` : '[OFF]'} | BPF Q:${this.state.bpfQ.toFixed(1)}`;
+    }
+    if (this.anrButton) {
+      this.anrButton.label = `ANR: ${this.state.anrEnabled ? 'ON' : 'OFF'}`;
+      this.anrButton.style.backgroundColor = this.state.anrEnabled ? '#059669' : '#1e293b';
+    }
+    if (this.notchButton) {
+      this.notchButton.label = `NOTCH: ${this.state.notchEnabled ? 'ON' : 'OFF'}`;
+      this.notchButton.style.backgroundColor = this.state.notchEnabled ? '#d97706' : '#1e293b';
     }
     if (this.playButton) {
       this.playButton.label = this.state.isPlaying ? t.stop : t.play;

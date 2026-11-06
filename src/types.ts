@@ -29,7 +29,7 @@ export interface RadioPreset {
   notes?: string;
 }
 
-export type HardwareDeviceType = 'RTL_SDR_USB' | 'AUDIO_LINE_IN' | 'IQ_TEST_BENCH';
+export type HardwareDeviceType = 'RTL_SDR_USB' | 'AIRSPY_SDR_USB' | 'AUDIO_LINE_IN' | 'IQ_TEST_BENCH';
 
 export interface HardwareStatus {
   connected: boolean;
@@ -60,6 +60,20 @@ export interface ReceiverState {
   stereoMode: boolean;
   audioFilterLowHz: number;
   audioFilterHighHz: number;
+
+  // Advanced DSP Filters
+  anrEnabled: boolean; // Adaptive Noise Reduction (LMS filter)
+  anrLevel: number; // 1 to 10
+  notchEnabled: boolean; // Configurable Notch Filter
+  notchFreqHz: number; // Notch target frequency in Hz (e.g. 1000 Hz tone or 50/60 Hz hum)
+  notchQ: number; // Notch Q-factor (e.g. 5 to 50)
+  bpfQ: number; // Bandpass filter Q-factor (e.g. 0.7 to 10)
+
+  // Wireless Mic & Audio Jack Preamp
+  wirelessMicBoostDb: number; // Preamp boost for wireless mic receiver (0 to 24 dB)
+  wirelessMicRumbleFilter: boolean; // 80 Hz highpass cut for wireless mic handling rumble
+  selectedAudioDeviceId: string;
+
   signalStrengthDbm: number;
   snrDb: number;
   sMeterValue: number; // 0 to 9, plus +10, +20, +30 dB

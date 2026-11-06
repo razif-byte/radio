@@ -3,12 +3,12 @@ import { HardwareStatus, HardwareDeviceType } from '../types.js';
 export type AnalogAudioCallback = (samples: Float32Array) => void;
 
 /**
- * Analog Audio Input (3.5mm Line-In / Microphone) Handler.
- * Connects to external analog receivers, line-in feeds, or audio sources.
+ * Analog Audio Input (3.5mm Line-In / Wireless Mic Receiver) Handler.
+ * Supports receiving from external wireless mic receiver audio jacks, line-in feeds, and soundcards.
  */
 export class AudioJackDevice {
   readonly deviceType: HardwareDeviceType = 'AUDIO_LINE_IN';
-  readonly name: string = 'Analog Audio Jack (3.5mm Line-In)';
+  readonly name: string = 'Penerima Mic Tanpa Wayar / Line-In 3.5mm';
 
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
@@ -17,33 +17,49 @@ export class AudioJackDevice {
   private isStreaming = false;
   private sampleCallback: AnalogAudioCallback | null = null;
   private lastError?: string;
+  private activeDeviceId?: string;
 
   get isConnected(): boolean {
     return this.mediaStream !== null && this.mediaStream.active;
   }
 
-  async open(): Promise<boolean> {
+  async getAudioInputDevices(): Promise<MediaDeviceInfo[]> {
     try {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      if (!navigator.mediaDevices?.enumerateDevices) return [];
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter((d) => d.kind === 'audioinput');
+    } catch {
+      return [];
+    }
+  }
+
+  async open(deviceId?: string): Promise<boolean> {
+    try {
+      this.activeDeviceId = deviceId;
+      const constraints: MediaStreamConstraints = {
         audio: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
+          channelCount: 1,
         },
         video: false,
-      });
+      };
+
+      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       this.lastError = undefined;
       return true;
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
-      console.warn('[Audio Jack] Could not open microphone/line-in:', err);
+      console.warn('[Audio Jack] Could not open wireless mic/line-in:', err);
       return false;
     }
   }
 
   async startStreaming(callback: AnalogAudioCallback): Promise<void> {
     if (!this.mediaStream) {
-      const ok = await this.open();
+      const ok = await this.open(this.activeDeviceId);
       if (!ok) throw new Error('Cannot access analog audio jack: ' + this.lastError);
     }
 

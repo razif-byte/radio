@@ -1,5 +1,5 @@
 import * as xb from 'xrblocks';
-import { ReceiverState, RadioBand, DemodulationMode, HardwareDeviceType } from './types.js';
+import { ReceiverState, RadioBand, DemodulationMode } from './types.js';
 import { BAND_CONFIGS, StationManager } from './storage/stationManager.js';
 import { DspEngine } from './dsp/dspEngine.js';
 import { SpectrumRenderer } from './ui/spectrumCanvas.js';
@@ -7,6 +7,7 @@ import { AudioRecorder } from './audio/audioRecorder.js';
 import { ISdrDevice } from './hardware/sdrInterface.js';
 import { IqTestSignalDevice } from './hardware/iqTestSignal.js';
 import { WebUsbRtlSdrDevice } from './hardware/webusbRtlSdr.js';
+import { WebUsbAirspyDevice } from './hardware/webusbAirspy.js';
 import { AudioJackDevice } from './hardware/audioJack.js';
 import { SpatialRadioScene } from './ui/spatialRadioScene.js';
 import { DesktopOverlay } from './ui/desktopOverlay.js';
@@ -21,6 +22,7 @@ class SmartRadioTunerApp extends xb.Script {
   // Hardware Devices
   private testBenchDevice: IqTestSignalDevice;
   private webUsbDevice: WebUsbRtlSdrDevice;
+  private airspyDevice: WebUsbAirspyDevice;
   private audioJackDevice: AudioJackDevice;
   private activeDevice: ISdrDevice;
 
@@ -52,6 +54,20 @@ class SmartRadioTunerApp extends xb.Script {
       stereoMode: true,
       audioFilterLowHz: 50,
       audioFilterHighHz: 15_000,
+
+      // Advanced DSP Filters
+      anrEnabled: false,
+      anrLevel: 5,
+      notchEnabled: false,
+      notchFreqHz: 1000,
+      notchQ: 15,
+      bpfQ: 1.5,
+
+      // Wireless Mic Preamp
+      wirelessMicBoostDb: 6,
+      wirelessMicRumbleFilter: true,
+      selectedAudioDeviceId: '',
+
       signalStrengthDbm: -105,
       snrDb: 0,
       sMeterValue: 0,
@@ -71,6 +87,7 @@ class SmartRadioTunerApp extends xb.Script {
     // Hardware devices
     this.testBenchDevice = new IqTestSignalDevice();
     this.webUsbDevice = new WebUsbRtlSdrDevice();
+    this.airspyDevice = new WebUsbAirspyDevice();
     this.audioJackDevice = new AudioJackDevice();
     this.activeDevice = this.testBenchDevice;
 
@@ -93,6 +110,8 @@ class SmartRadioTunerApp extends xb.Script {
         onScanToggle: () => this.toggleScan(),
         onModeSelect: (mode) => this.setMode(mode),
         onBandSelect: (band) => this.setBand(band),
+        onAnrToggle: () => this.setAnr(!this.state.anrEnabled, this.state.anrLevel),
+        onNotchToggle: () => this.setNotch(!this.state.notchEnabled, this.state.notchFreqHz, this.state.notchQ),
       }
     );
     this.add(this.spatialScene);
@@ -123,8 +142,16 @@ class SmartRadioTunerApp extends xb.Script {
         onSavePreset: () => this.saveCurrentPreset(),
         onLanguageToggle: () => this.toggleLanguage(),
         onConnectRtlSdr: () => void this.connectRtlSdrWebUsb(),
+        onConnectAirspy: () => void this.connectAirspyWebUsb(),
         onConnectLineIn: () => void this.connectAnalogLineIn(),
         onUseTestBench: () => void this.useTestBench(),
+
+        // Advanced DSP Filter Handlers
+        onAnrToggle: (enabled, level) => this.setAnr(enabled, level),
+        onNotchToggle: (enabled, freq, q) => this.setNotch(enabled, freq, q),
+        onBandpassQChange: (q) => this.setBandpassQ(q),
+        onWirelessMicBoostChange: (boost, rumble) => this.setWirelessMicOptions(boost, rumble),
+        onSelectAudioInputDevice: (id) => void this.selectAudioDevice(id),
       }
     );
 
@@ -273,6 +300,38 @@ class SmartRadioTunerApp extends xb.Script {
     this.dspEngine.setAgcEnabled(this.state.agcEnabled);
   }
 
+  // --- ADVANCED DSP FILTERS ---
+  setAnr(enabled: boolean, level: number): void {
+    this.state.anrEnabled = enabled;
+    this.state.anrLevel = level;
+    this.dspEngine.setAnr(enabled, level);
+  }
+
+  setNotch(enabled: boolean, freqHz: number, q: number): void {
+    this.state.notchEnabled = enabled;
+    this.state.notchFreqHz = freqHz;
+    this.state.notchQ = q;
+    this.dspEngine.setNotch(enabled, freqHz, q);
+  }
+
+  setBandpassQ(q: number): void {
+    this.state.bpfQ = q;
+    this.dspEngine.setBandpassQ(this.state.bandwidthHz / 2, q);
+  }
+
+  setWirelessMicOptions(boostDb: number, rumbleCut: boolean): void {
+    this.state.wirelessMicBoostDb = boostDb;
+    this.state.wirelessMicRumbleFilter = rumbleCut;
+    this.dspEngine.setWirelessMicOptions(boostDb, rumbleCut);
+  }
+
+  async selectAudioDevice(deviceId: string): Promise<void> {
+    this.state.selectedAudioDeviceId = deviceId;
+    if (this.state.band === 'LINE_IN') {
+      await this.connectAnalogLineIn(deviceId);
+    }
+  }
+
   seekStation(direction: 1 | -1): void {
     const step = this.state.stepHz * direction;
     this.tuneBy(step);
@@ -332,22 +391,39 @@ class SmartRadioTunerApp extends xb.Script {
       await this.activeDevice.setCenterFrequency(this.state.frequencyHz);
       await this.startStream();
     } else {
-      alert('Peranti RTL-SDR tidak dikesan melalui WebUSB. Memastikan pemacu WinUSB dipasang atau menggunakan Bangku Ujian Isyarat IQ.');
+      alert('Peranti RTL-SDR tidak dikesan melalui WebUSB. Sila pastikan kabel USB disambung atau gunakan Bangku Ujian Isyarat IQ.');
       await this.useTestBench();
     }
   }
 
-  async connectAnalogLineIn(): Promise<void> {
+  async connectAirspyWebUsb(): Promise<void> {
     await this.stopStream();
-    const ok = await this.audioJackDevice.open();
+    const ok = await this.airspyDevice.open();
     if (ok) {
+      this.activeDevice = this.airspyDevice;
+      await this.activeDevice.setCenterFrequency(this.state.frequencyHz);
+      await this.startStream();
+    } else {
+      alert('Peranti Airspy SDR (R2/Mini/HF+) tidak dikesan melalui WebUSB. Sila pastikan Airspy disambung atau gunakan Bangku Ujian Isyarat IQ.');
+      await this.useTestBench();
+    }
+  }
+
+  async connectAnalogLineIn(deviceId?: string): Promise<void> {
+    await this.stopStream();
+    const ok = await this.audioJackDevice.open(deviceId);
+    if (ok) {
+      this.dspEngine.setWirelessMicOptions(
+        this.state.wirelessMicBoostDb,
+        this.state.wirelessMicRumbleFilter
+      );
       await this.audioJackDevice.startStreaming((samples) => {
         this.dspEngine.processAnalogAudioBatch(samples);
       });
       this.activeDevice = this.audioJackDevice as unknown as ISdrDevice;
       this.state.isPlaying = true;
     } else {
-      alert('Tidak dapat mengakses input audio mikrofon/Line-In.');
+      alert('Tidak dapat mengakses input audio mikrofon/Line-In penerima mic tanpa wayar.');
       await this.useTestBench();
     }
   }
@@ -364,7 +440,7 @@ class SmartRadioTunerApp extends xb.Script {
 document.addEventListener('DOMContentLoaded', async () => {
   const options = new xb.Options();
   options.setAppTitle('Smart Radio Tuner Professional');
-  options.setAppDescription('Multi-Band SDR Radio Receiver for FM, AM, Shortwave & WebUSB RTL-SDR');
+  options.setAppDescription('Multi-Band SDR Radio Receiver for FM, AM, Shortwave, RTL-SDR & Airspy SDR');
 
   xb.add(new SmartRadioTunerApp());
   await xb.init(options);

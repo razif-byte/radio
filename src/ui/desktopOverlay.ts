@@ -1,4 +1,4 @@
-import { ReceiverState, RadioBand, DemodulationMode, HardwareStatus, TestResult } from '../types.js';
+import { ReceiverState, RadioBand, DemodulationMode, HardwareStatus } from '../types.js';
 import { translations } from '../translations.js';
 import { SpectrumRenderer } from './spectrumCanvas.js';
 import { BAND_CONFIGS, StationManager } from '../storage/stationManager.js';
@@ -24,8 +24,16 @@ export interface DesktopOverlayHandlers {
   onSavePreset: () => void;
   onLanguageToggle: () => void;
   onConnectRtlSdr: () => void;
+  onConnectAirspy: () => void;
   onConnectLineIn: () => void;
   onUseTestBench: () => void;
+
+  // Advanced DSP Handlers
+  onAnrToggle: (enabled: boolean, level: number) => void;
+  onNotchToggle: (enabled: boolean, freqHz: number, q: number) => void;
+  onBandpassQChange: (q: number) => void;
+  onWirelessMicBoostChange: (boostDb: number, rumbleCut: boolean) => void;
+  onSelectAudioInputDevice: (deviceId: string) => void;
 }
 
 export class DesktopOverlay {
@@ -49,6 +57,11 @@ export class DesktopOverlay {
   private hwStatusEl!: HTMLElement;
   private squelchValEl!: HTMLElement;
   private rfGainValEl!: HTMLElement;
+  private anrValEl!: HTMLElement;
+  private notchFreqValEl!: HTMLElement;
+  private notchQValEl!: HTMLElement;
+  private bpfQValEl!: HTMLElement;
+  private micBoostValEl!: HTMLElement;
 
   // Modals
   private modalContainer!: HTMLDivElement;
@@ -79,7 +92,6 @@ export class DesktopOverlay {
 
   private render(): void {
     const t = translations[this.state.language];
-    const bandCfg = BAND_CONFIGS[this.state.band];
 
     this.container.innerHTML = `
       <div class="sdr-app-shell">
@@ -131,9 +143,27 @@ export class DesktopOverlay {
                   <span class="band-range">${t.bandSwDesc}</span>
                 </button>
                 <button class="band-btn ${this.state.band === 'LINE_IN' ? 'active' : ''}" data-band="LINE_IN">
-                  <span class="band-name">${t.bandLineIn}</span>
-                  <span class="band-range">Line-In / Mic 3.5mm</span>
+                  <span class="band-name">🎤 ${t.bandLineIn}</span>
+                  <span class="band-range">${t.bandLineInDesc}</span>
                 </button>
+              </div>
+            </div>
+
+            <!-- WIRELESS MIC RECEIVER PREAMP CARD (HIGHLIGHTED IN LINE_IN MODE) -->
+            <div class="sdr-panel-card ${this.state.band === 'LINE_IN' ? 'active-highlight' : ''}">
+              <h3 class="panel-heading">🎤 ${t.wirelessMicTitle}</h3>
+              <div class="slider-control-group">
+                <div class="slider-label-row">
+                  <span>${t.micPreampBoost}</span>
+                  <span id="val-mic-boost" class="slider-val-tag">+${this.state.wirelessMicBoostDb} dB</span>
+                </div>
+                <input id="slider-mic-boost" type="range" min="0" max="24" step="1" value="${this.state.wirelessMicBoostDb}" class="sdr-slider" />
+              </div>
+              <div class="checkbox-row">
+                <label class="sdr-toggle-label">
+                  <input id="chk-rumble" type="checkbox" ${this.state.wirelessMicRumbleFilter ? 'checked' : ''} />
+                  <span>${t.rumbleFilter}</span>
+                </label>
               </div>
             </div>
 
@@ -158,6 +188,7 @@ export class DesktopOverlay {
                 <div class="freq-meta-badge">MODE: <strong id="meta-mode">${this.state.mode}</strong></div>
                 <div class="freq-meta-badge">STEP: <strong id="meta-step">${this.state.stepHz / 1000} kHz</strong></div>
                 <div class="freq-meta-badge">IF BW: <strong id="meta-bw">${this.state.bandwidthHz / 1000} kHz</strong></div>
+                <div class="freq-meta-badge">DSP: <strong id="meta-anr" style="color: ${this.state.anrEnabled ? '#34d399' : '#64748b'}">ANR</strong> | <strong id="meta-notch" style="color: ${this.state.notchEnabled ? '#f59e0b' : '#64748b'}">NOTCH</strong></div>
               </div>
 
               <div class="freq-main-row">
@@ -204,7 +235,7 @@ export class DesktopOverlay {
 
           <!-- RIGHT PANEL: SIGNAL METERS, HARDWARE & DEMODULATOR -->
           <aside class="sdr-right-panel">
-            <!-- HARDWARE STATUS CARD -->
+            <!-- HARDWARE STATUS CARD (RTL-SDR & AIRSPY SDR) -->
             <div class="sdr-panel-card">
               <h3 class="panel-heading">${t.hardwareTitle}</h3>
               <div id="hw-status-box" class="hw-status-box ${this.hardwareStatus.connected ? 'status-connected' : 'status-disconnected'}">
@@ -217,6 +248,7 @@ export class DesktopOverlay {
 
               <div class="hw-actions-col">
                 <button id="btn-connect-usb" class="btn-sdr-action">🔌 ${t.connectRtlSdr}</button>
+                <button id="btn-connect-airspy" class="btn-sdr-action btn-airspy">📡 ${t.connectAirspy}</button>
                 <button id="btn-connect-linein" class="btn-sdr-action">🎙️ ${t.connectLineIn}</button>
                 <button id="btn-use-testbench" class="btn-sdr-action">🧪 ${t.useTestSignal}</button>
               </div>
@@ -247,9 +279,53 @@ export class DesktopOverlay {
               </div>
             </div>
 
-            <!-- DSP CONTROLS: SQUELCH, RF GAIN, AGC -->
+            <!-- ADVANCED DIGITAL FILTERS: ANR & NOTCH FILTER & BANDPASS Q -->
+            <div class="sdr-panel-card sdr-filters-panel">
+              <h3 class="panel-heading">${t.advancedFiltersTitle}</h3>
+
+              <!-- Adaptive Noise Reduction (ANR) -->
+              <div class="filter-box">
+                <div class="checkbox-row">
+                  <label class="sdr-toggle-label">
+                    <input id="chk-anr" type="checkbox" ${this.state.anrEnabled ? 'checked' : ''} />
+                    <strong style="color: #34d399">${t.anrTitle}</strong>
+                  </label>
+                  <span id="val-anr" class="slider-val-tag">Tahap ${this.state.anrLevel}</span>
+                </div>
+                <input id="slider-anr" type="range" min="1" max="10" step="1" value="${this.state.anrLevel}" class="sdr-slider" ${this.state.anrEnabled ? '' : 'disabled'} />
+              </div>
+
+              <!-- Notch Filter -->
+              <div class="filter-box" style="margin-top: 8px;">
+                <div class="checkbox-row">
+                  <label class="sdr-toggle-label">
+                    <input id="chk-notch" type="checkbox" ${this.state.notchEnabled ? 'checked' : ''} />
+                    <strong style="color: #f59e0b">${t.notchTitle}</strong>
+                  </label>
+                  <span id="val-notch-freq" class="slider-val-tag">${this.state.notchFreqHz} Hz</span>
+                </div>
+                <input id="slider-notch-freq" type="range" min="50" max="5000" step="25" value="${this.state.notchFreqHz}" class="sdr-slider" ${this.state.notchEnabled ? '' : 'disabled'} />
+
+                <div class="slider-label-row" style="margin-top: 4px;">
+                  <span style="font-size: 10px;">${t.qFactor}</span>
+                  <span id="val-notch-q" class="slider-val-tag" style="font-size: 10px;">Q = ${this.state.notchQ}</span>
+                </div>
+                <input id="slider-notch-q" type="range" min="2" max="40" step="1" value="${this.state.notchQ}" class="sdr-slider" ${this.state.notchEnabled ? '' : 'disabled'} />
+              </div>
+
+              <!-- Bandpass Filter Q Factor -->
+              <div class="filter-box" style="margin-top: 8px;">
+                <div class="slider-label-row">
+                  <span>${t.bpfTitle}</span>
+                  <span id="val-bpf-q" class="slider-val-tag">Q = ${this.state.bpfQ.toFixed(1)}</span>
+                </div>
+                <input id="slider-bpf-q" type="range" min="0.5" max="8.0" step="0.1" value="${this.state.bpfQ}" class="sdr-slider" />
+              </div>
+            </div>
+
+            <!-- DSP SQUELCH, RF GAIN, AGC -->
             <div class="sdr-panel-card">
-              <h3 class="panel-heading">KAWALAN DSP & GANDAAN</h3>
+              <h3 class="panel-heading">KAWALAN GANDAAN & SQUELCH</h3>
               <!-- Squelch -->
               <div class="slider-control-group">
                 <div class="slider-label-row">
@@ -354,6 +430,11 @@ export class DesktopOverlay {
     this.hwStatusEl = this.container.querySelector('#hw-status-box')!;
     this.squelchValEl = this.container.querySelector('#val-squelch')!;
     this.rfGainValEl = this.container.querySelector('#val-rfgain')!;
+    this.anrValEl = this.container.querySelector('#val-anr')!;
+    this.notchFreqValEl = this.container.querySelector('#val-notch-freq')!;
+    this.notchQValEl = this.container.querySelector('#val-notch-q')!;
+    this.bpfQValEl = this.container.querySelector('#val-bpf-q')!;
+    this.micBoostValEl = this.container.querySelector('#val-mic-boost')!;
     this.modalContainer = this.container.querySelector('#modal-container') as HTMLDivElement;
 
     // Attach listeners
@@ -418,7 +499,7 @@ export class DesktopOverlay {
       });
     });
 
-    // DSP Controls
+    // DSP Controls: Squelch & RF Gain
     const squelchSlider = this.container.querySelector('#slider-squelch') as HTMLInputElement;
     squelchSlider?.addEventListener('input', () => {
       const val = parseFloat(squelchSlider.value);
@@ -445,9 +526,61 @@ export class DesktopOverlay {
       this.handlers.onAgcToggle();
     });
 
+    // --- ADVANCED DSP FILTERS LISTENERS ---
+    const anrChk = this.container.querySelector('#chk-anr') as HTMLInputElement;
+    const anrSlider = this.container.querySelector('#slider-anr') as HTMLInputElement;
+    anrChk?.addEventListener('change', () => {
+      anrSlider.disabled = !anrChk.checked;
+      this.handlers.onAnrToggle(anrChk.checked, parseInt(anrSlider.value, 10));
+    });
+    anrSlider?.addEventListener('input', () => {
+      const lvl = parseInt(anrSlider.value, 10);
+      this.anrValEl.textContent = `Tahap ${lvl}`;
+      this.handlers.onAnrToggle(anrChk.checked, lvl);
+    });
+
+    const notchChk = this.container.querySelector('#chk-notch') as HTMLInputElement;
+    const notchFreqSlider = this.container.querySelector('#slider-notch-freq') as HTMLInputElement;
+    const notchQSlider = this.container.querySelector('#slider-notch-q') as HTMLInputElement;
+
+    const onNotchInput = () => {
+      const f = parseInt(notchFreqSlider.value, 10);
+      const q = parseInt(notchQSlider.value, 10);
+      notchFreqSlider.disabled = !notchChk.checked;
+      notchQSlider.disabled = !notchChk.checked;
+      this.notchFreqValEl.textContent = `${f} Hz`;
+      this.notchQValEl.textContent = `Q = ${q}`;
+      this.handlers.onNotchToggle(notchChk.checked, f, q);
+    };
+
+    notchChk?.addEventListener('change', onNotchInput);
+    notchFreqSlider?.addEventListener('input', onNotchInput);
+    notchQSlider?.addEventListener('input', onNotchInput);
+
+    const bpfQSlider = this.container.querySelector('#slider-bpf-q') as HTMLInputElement;
+    bpfQSlider?.addEventListener('input', () => {
+      const q = parseFloat(bpfQSlider.value);
+      this.bpfQValEl.textContent = `Q = ${q.toFixed(1)}`;
+      this.handlers.onBandpassQChange(q);
+    });
+
+    // Wireless Mic Preamp Boost & Rumble Cut
+    const micBoostSlider = this.container.querySelector('#slider-mic-boost') as HTMLInputElement;
+    const rumbleChk = this.container.querySelector('#chk-rumble') as HTMLInputElement;
+    const onMicBoostInput = () => {
+      const boost = parseInt(micBoostSlider.value, 10);
+      this.micBoostValEl.textContent = `+${boost} dB`;
+      this.handlers.onWirelessMicBoostChange(boost, rumbleChk.checked);
+    };
+    micBoostSlider?.addEventListener('input', onMicBoostInput);
+    rumbleChk?.addEventListener('change', onMicBoostInput);
+
     // Hardware connect buttons
     this.container.querySelector('#btn-connect-usb')?.addEventListener('click', () => {
       this.handlers.onConnectRtlSdr();
+    });
+    this.container.querySelector('#btn-connect-airspy')?.addEventListener('click', () => {
+      this.handlers.onConnectAirspy();
     });
     this.container.querySelector('#btn-connect-linein')?.addEventListener('click', () => {
       this.handlers.onConnectLineIn();
@@ -493,7 +626,6 @@ export class DesktopOverlay {
 
   private setupKeyboardShortcuts(): void {
     window.addEventListener('keydown', (e) => {
-      // Don't trigger if typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
@@ -541,7 +673,6 @@ export class DesktopOverlay {
 
     // S-Meter updates
     if (this.sMeterBarEl) {
-      // S0 = 5%, S9 = 75%, +30dB = 100%
       const norm = Math.max(5, Math.min(100, ((this.state.signalStrengthDbm - (-120)) / 100) * 100));
       this.sMeterBarEl.style.width = `${norm}%`;
       this.sMeterBarEl.style.backgroundColor = norm > 75 ? '#ef4444' : norm > 45 ? '#22c55e' : '#38bdf8';
@@ -598,6 +729,12 @@ export class DesktopOverlay {
 
     const metaBand = this.container.querySelector('#meta-band');
     if (metaBand) metaBand.textContent = this.state.band;
+
+    const metaAnr = this.container.querySelector('#meta-anr') as HTMLElement;
+    if (metaAnr) metaAnr.style.color = this.state.anrEnabled ? '#34d399' : '#64748b';
+
+    const metaNotch = this.container.querySelector('#meta-notch') as HTMLElement;
+    if (metaNotch) metaNotch.style.color = this.state.notchEnabled ? '#f59e0b' : '#64748b';
   }
 
   renderPresets(): void {
@@ -652,7 +789,7 @@ export class DesktopOverlay {
           <h2>🧪 ${t.testsTitle}</h2>
           <button id="modal-close" class="modal-close-btn">✕</button>
         </div>
-        <p class="modal-intro">Menguji pengesahan matematik DSP, pematuhan demodulasi WFM/AM/SSB/CW, penukaran frekuensi, FFT Cooley-Tukey, dan abstraksi perkakasan.</p>
+        <p class="modal-intro">Menguji pengesahan matematik DSP, pematuhan demodulasi WFM/AM/SSB/CW, penapis takuk (notch), pengurangan hingar adaptif (ANR), penapis gegaran mic tanpa wayar, penukaran frekuensi, FFT Cooley-Tukey, dan abstraksi perkakasan RTL-SDR & Airspy.</p>
         <div id="test-results-list" class="test-results-container">
           <div class="loading-tests">Sedang menjalankan ujian DSP automatik...</div>
         </div>

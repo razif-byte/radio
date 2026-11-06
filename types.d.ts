@@ -12,7 +12,7 @@ interface USBDevice {
   claimInterface(interfaceNumber: number): Promise<void>;
   releaseInterface(interfaceNumber: number): Promise<void>;
   controlTransferIn(setup: USBControlTransferParameters, length: number): Promise<USBInTransferResult>;
-  controlTransferOut(setup: USBControlTransferParameters, data?: BufferSource): Promise<USBOutTransferResult>;
+  controlTransferOut(setup: USBControlTransferParameters, data?: any): Promise<USBOutTransferResult>;
   transferIn(endpointNumber: number, length: number): Promise<USBInTransferResult>;
 }
 

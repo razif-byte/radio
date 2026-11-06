@@ -45,6 +45,7 @@ export interface TranslationDictionary {
   connected: string;
   disconnected: string;
   connectRtlSdr: string;
+  connectAirspy: string;
   connectLineIn: string;
   useTestSignal: string;
   sampleRate: string;
@@ -58,6 +59,19 @@ export interface TranslationDictionary {
   noiseBlanker: string;
   stereo: string;
   mono: string;
+  // Advanced DSP Filters
+  advancedFiltersTitle: string;
+  anrTitle: string;
+  anrDesc: string;
+  notchTitle: string;
+  notchFreq: string;
+  qFactor: string;
+  bpfTitle: string;
+  wirelessMicTitle: string;
+  wirelessMicDesc: string;
+  micPreampBoost: string;
+  rumbleFilter: string;
+  audioDeviceSelect: string;
   // Spectrum & Waterfall
   spectrumTitle: string;
   waterfallTitle: string;
@@ -94,7 +108,7 @@ export const translations: Record<Language, TranslationDictionary> = {
   ms: {
     appTitle: 'PENALA RADIO PINTAR PROFESIONAL',
     appSubtitle: 'Penerima Radio Multi-Jalur & SDR Workstation',
-    tagline: 'Pemprosesan Isyarat Digital Sebenar (DSP) & Antara Muka Perkakasan RTL-SDR',
+    tagline: 'Pemprosesan Isyarat Digital Sebenar (DSP) & Antara Muka Perkakasan RTL-SDR / Airspy',
     langSelect: 'Bahasa',
     // Bands
     bandFm: 'FM Siaran',
@@ -104,7 +118,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     bandFmDesc: '87.5 MHz – 108.0 MHz (WFM)',
     bandAmDesc: '530 kHz – 1710 kHz (AM)',
     bandSwDesc: '1.7 MHz – 30.0 MHz (AM / SSB / CW)',
-    bandLineInDesc: 'Pemantauan Audio Analog Sebenar dari bicu 3.5mm / Line-In',
+    bandLineInDesc: 'Penerima Mic Tanpa Wayar & Pemantauan Audio 3.5mm Sebenar',
     // Controls
     play: 'MULA',
     stop: 'HENTI',
@@ -136,7 +150,8 @@ export const translations: Record<Language, TranslationDictionary> = {
     connected: 'TERSAMBUNG',
     disconnected: 'TIDAK TERSAMBUNG',
     connectRtlSdr: 'Sambung RTL-SDR (WebUSB)',
-    connectLineIn: 'Sambung Audio Jack / Line-In',
+    connectAirspy: 'Sambung Airspy SDR (WebUSB)',
+    connectLineIn: 'Sambung Audio Jack / Wireless Mic',
     useTestSignal: 'Gunakan Isyarat Ujian IQ',
     sampleRate: 'Kadar Sampel',
     rfGain: 'Gandaan RF',
@@ -149,6 +164,19 @@ export const translations: Record<Language, TranslationDictionary> = {
     noiseBlanker: 'Pengurangan Hingar',
     stereo: 'Stereo',
     mono: 'Mono',
+    // Advanced DSP Filters
+    advancedFiltersTitle: 'Penapisan Digital Lanjutan (DSP)',
+    anrTitle: 'Pengurangan Hingar Adaptif (ANR)',
+    anrDesc: 'Penapis LMS pintar bagi memadamkan statik latar & desisan',
+    notchTitle: 'Penapis Takuk (Notch Filter)',
+    notchFreq: 'Frekuensi Takuk (Hz)',
+    qFactor: 'Ketajaman / Faktor Q',
+    bpfTitle: 'Penapis Jalur Lepas (Bandpass Q)',
+    wirelessMicTitle: 'Penerima Mic Tanpa Wayar (Wireless Mic)',
+    wirelessMicDesc: 'Penerimaan isyarat audio dari receiver mic tanpa wayar melalui bicu 3.5mm',
+    micPreampBoost: 'Gandaan Preamp Mic',
+    rumbleFilter: 'Potongan Gegaran 80Hz (Rumble Cut)',
+    audioDeviceSelect: 'Pilih Sumber Input Audio',
     // Spectrum
     spectrumTitle: 'Penganalisis Spektrum RF',
     waterfallTitle: 'Paparan Air Terjun (Waterfall)',
@@ -175,14 +203,14 @@ export const translations: Record<Language, TranslationDictionary> = {
     testPassed: 'LULUS',
     testFailed: 'GAGAL',
     // Notes
-    audioJackNotice: 'PERHATIAN: Bicu audio 3.5mm ialah antara muka input analog audio, bukan antena RF atau penala frekuensi radio terus.',
-    hardwareNote: 'Sokongan perkakasan sebenar: RTL-SDR Blog V3 / V4 (WebUSB) & Bicu Audio Analog.',
+    audioJackNotice: 'PERHATIAN: Bicu audio 3.5mm ialah antara muka input analog audio untuk penerima mic tanpa wayar / radio luar, bukan penala frekuensi radio terus.',
+    hardwareNote: 'Sokongan perkakasan sebenar: RTL-SDR Blog V3/V4 & Airspy R2/Mini/HF+ (WebUSB) & Bicu Audio Wireless Mic.',
     xrReminder: 'Aplikasi XR ini paling baik dialami pada peranti Android XR seperti Galaxy XR atau XREAL AURA. Pada komputer meja, kami menyediakan persekitaran simulasi untuk pratonton aplikasi.',
   },
   en: {
     appTitle: 'SMART RADIO TUNER PROFESSIONAL',
     appSubtitle: 'Multi-Band Radio Receiver & SDR Workstation',
-    tagline: 'Real Digital Signal Processing (DSP) & RTL-SDR Hardware Interface',
+    tagline: 'Real Digital Signal Processing (DSP) & RTL-SDR / Airspy Hardware Interface',
     langSelect: 'Language',
     // Bands
     bandFm: 'FM Broadcast',
@@ -192,7 +220,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     bandFmDesc: '87.5 MHz – 108.0 MHz (WFM)',
     bandAmDesc: '530 kHz – 1710 kHz (AM)',
     bandSwDesc: '1.7 MHz – 30.0 MHz (AM / SSB / CW)',
-    bandLineInDesc: 'Real Analog Audio monitoring via 3.5mm jack or Line-In',
+    bandLineInDesc: 'Wireless Mic Receiver & 3.5mm Real Audio Monitoring',
     // Controls
     play: 'START',
     stop: 'STOP',
@@ -224,7 +252,8 @@ export const translations: Record<Language, TranslationDictionary> = {
     connected: 'CONNECTED',
     disconnected: 'DISCONNECTED',
     connectRtlSdr: 'Connect RTL-SDR (WebUSB)',
-    connectLineIn: 'Connect Audio Jack / Line-In',
+    connectAirspy: 'Connect Airspy SDR (WebUSB)',
+    connectLineIn: 'Connect Audio Jack / Wireless Mic',
     useTestSignal: 'Use IQ Test Signal Bench',
     sampleRate: 'Sample Rate',
     rfGain: 'RF Gain',
@@ -237,6 +266,19 @@ export const translations: Record<Language, TranslationDictionary> = {
     noiseBlanker: 'Noise Blanker',
     stereo: 'Stereo',
     mono: 'Mono',
+    // Advanced DSP Filters
+    advancedFiltersTitle: 'Advanced Digital Filtering (DSP)',
+    anrTitle: 'Adaptive Noise Reduction (ANR)',
+    anrDesc: 'Smart LMS adaptive filter to cancel background static and hiss',
+    notchTitle: 'Notch Filter',
+    notchFreq: 'Notch Frequency (Hz)',
+    qFactor: 'Selectivity / Q-Factor',
+    bpfTitle: 'Bandpass Filter Q',
+    wirelessMicTitle: 'Wireless Mic Receiver Input',
+    wirelessMicDesc: 'Receives analog audio feed from wireless mic receiver via 3.5mm jack',
+    micPreampBoost: 'Mic Preamp Boost',
+    rumbleFilter: 'Rumble Cut Filter (80Hz)',
+    audioDeviceSelect: 'Select Audio Input Source',
     // Spectrum
     spectrumTitle: 'RF Spectrum Analyzer',
     waterfallTitle: 'Waterfall Display',
@@ -263,8 +305,8 @@ export const translations: Record<Language, TranslationDictionary> = {
     testPassed: 'PASSED',
     testFailed: 'FAILED',
     // Notes
-    audioJackNotice: 'NOTE: The 3.5mm audio jack is an analog audio input interface, not an RF antenna or direct RF tuner.',
-    hardwareNote: 'Real hardware support: RTL-SDR Blog V3 / V4 (WebUSB) & Analog Audio Jack.',
+    audioJackNotice: 'NOTE: The 3.5mm audio jack is an analog audio input interface for wireless mic receivers or external radios, not a direct RF tuner.',
+    hardwareNote: 'Real hardware support: RTL-SDR Blog V3/V4, Airspy R2/Mini/HF+ (WebUSB) & Wireless Mic Audio Jack.',
     xrReminder: 'The XR app is best viewed in an Android XR device like Galaxy XR or XREAL AURA. On desktop, we provide you a simulated environment for previewing the app.',
   },
 };

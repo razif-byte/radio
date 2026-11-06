@@ -1,7 +1,8 @@
 import { DemodulationMode } from '../types.js';
 
 /**
- * High-performance audio filters, AGC, and Demodulators for SDR IQ streams.
+ * High-performance audio filters, AGC, Demodulators, and Advanced DSP Filters
+ * (Adaptive Noise Reduction, Notch Filter, Highpass Rumble Filter, and Tunable Bandpass).
  */
 
 export class BiquadFilter {
@@ -16,7 +17,7 @@ export class BiquadFilter {
   private y2 = 0;
 
   setLowpass(sampleRate: number, cutoffHz: number, q: number = 0.707): void {
-    const w0 = (2 * Math.PI * cutoffHz) / sampleRate;
+    const w0 = (2 * Math.PI * Math.min(cutoffHz, sampleRate * 0.49)) / sampleRate;
     const alpha = Math.sin(w0) / (2 * q);
     const cosw0 = Math.cos(w0);
 
@@ -28,16 +29,47 @@ export class BiquadFilter {
     this.a2 = (1 - alpha) / a0;
   }
 
-  setBandpass(sampleRate: number, centerHz: number, bandwidthHz: number): void {
-    const w0 = (2 * Math.PI * centerHz) / sampleRate;
-    const q = centerHz / bandwidthHz;
+  setHighpass(sampleRate: number, cutoffHz: number, q: number = 0.707): void {
+    const w0 = (2 * Math.PI * Math.max(10, Math.min(cutoffHz, sampleRate * 0.49))) / sampleRate;
     const alpha = Math.sin(w0) / (2 * q);
     const cosw0 = Math.cos(w0);
 
     const a0 = 1 + alpha;
-    this.b0 = (alpha) / a0;
+    this.b0 = (1 + cosw0) / 2 / a0;
+    this.b1 = -(1 + cosw0) / a0;
+    this.b2 = (1 + cosw0) / 2 / a0;
+    this.a1 = (-2 * cosw0) / a0;
+    this.a2 = (1 - alpha) / a0;
+  }
+
+  setBandpass(sampleRate: number, centerHz: number, bandwidthHz: number): void {
+    const q = Math.max(0.1, centerHz / Math.max(10, bandwidthHz));
+    this.setBandpassQ(sampleRate, centerHz, q);
+  }
+
+  setBandpassQ(sampleRate: number, centerHz: number, q: number): void {
+    const w0 = (2 * Math.PI * Math.min(centerHz, sampleRate * 0.49)) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * Math.max(0.1, q));
+    const cosw0 = Math.cos(w0);
+
+    const a0 = 1 + alpha;
+    this.b0 = alpha / a0;
     this.b1 = 0;
-    this.b2 = (-alpha) / a0;
+    this.b2 = -alpha / a0;
+    this.a1 = (-2 * cosw0) / a0;
+    this.a2 = (1 - alpha) / a0;
+  }
+
+  setNotch(sampleRate: number, notchFreqHz: number, q: number = 10.0): void {
+    const safeFreq = Math.max(20, Math.min(notchFreqHz, sampleRate * 0.49));
+    const w0 = (2 * Math.PI * safeFreq) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * Math.max(0.5, q));
+    const cosw0 = Math.cos(w0);
+
+    const a0 = 1 + alpha;
+    this.b0 = 1 / a0;
+    this.b1 = (-2 * cosw0) / a0;
+    this.b2 = 1 / a0;
     this.a1 = (-2 * cosw0) / a0;
     this.a2 = (1 - alpha) / a0;
   }
@@ -48,7 +80,7 @@ export class BiquadFilter {
     this.x1 = x;
     this.y2 = this.y1;
     this.y1 = y;
-    return y;
+    return isNaN(y) ? 0 : y;
   }
 
   reset(): void {
@@ -56,6 +88,72 @@ export class BiquadFilter {
     this.x2 = 0;
     this.y1 = 0;
     this.y2 = 0;
+  }
+}
+
+/**
+ * Adaptive Noise Reduction (ANR) using Normalized Least Mean Squares (NLMS)
+ * line enhancer algorithm. Extracts periodic signal (voice / tone) from stochastic RF noise / static.
+ */
+export class AdaptiveNoiseReduction {
+  private readonly filterLength = 32;
+  private readonly delayLength = 8;
+  private weights: Float32Array;
+  private buffer: Float32Array;
+  private bufIndex = 0;
+  private mu = 0.015; // Convergence step size
+  private leak = 0.9998;
+  public enabled = false;
+
+  constructor() {
+    this.weights = new Float32Array(this.filterLength);
+    this.buffer = new Float32Array(this.filterLength + this.delayLength);
+  }
+
+  setLevel(level: number): void {
+    // level: 1 to 10
+    const norm = Math.max(1, Math.min(10, level)) / 10;
+    this.mu = 0.005 + norm * 0.035;
+    this.leak = 1.0 - norm * 0.0008;
+  }
+
+  reset(): void {
+    this.weights.fill(0);
+    this.buffer.fill(0);
+    this.bufIndex = 0;
+  }
+
+  process(x: number): number {
+    if (!this.enabled) return x;
+
+    const totalBuf = this.buffer.length;
+    this.buffer[this.bufIndex] = x;
+
+    // Convolve delayed input with weights to predict correlated signal
+    let y = 0;
+    let power = 1e-6;
+    for (let k = 0; k < this.filterLength; k++) {
+      const idx = (this.bufIndex - this.delayLength - k + totalBuf) % totalBuf;
+      const xDelayed = this.buffer[idx];
+      y += this.weights[k] * xDelayed;
+      power += xDelayed * xDelayed;
+    }
+
+    // Error calculation: difference between current sample and predicted periodic signal
+    const err = x - y;
+    const normalizedMu = this.mu / power;
+
+    // Weight update (NLMS with leakage)
+    for (let k = 0; k < this.filterLength; k++) {
+      const idx = (this.bufIndex - this.delayLength - k + totalBuf) % totalBuf;
+      const xDelayed = this.buffer[idx];
+      this.weights[k] = this.weights[k] * this.leak + normalizedMu * err * xDelayed;
+    }
+
+    this.bufIndex = (this.bufIndex + 1) % totalBuf;
+
+    // Output the cleaned, enhanced signal (y) blended with slight residual
+    return 0.85 * y + 0.15 * x;
   }
 }
 
@@ -112,6 +210,15 @@ export class Demodulator {
   private readonly cwBandpass: BiquadFilter;
   private readonly agc: AudioAgc;
 
+  // Advanced Digital Filters
+  public readonly anr: AdaptiveNoiseReduction;
+  public readonly notchFilter: BiquadFilter;
+  public readonly bandpassFilter: BiquadFilter;
+  public readonly rumbleHighpass: BiquadFilter;
+
+  public notchEnabled = false;
+  public rumbleEnabled = false;
+
   constructor(audioSampleRate: number = 48000) {
     this.deEmphasis = new DeEmphasisFilter(audioSampleRate, 50e-6);
     this.audioLowpass = new BiquadFilter();
@@ -119,6 +226,23 @@ export class Demodulator {
     this.cwBandpass = new BiquadFilter();
     this.cwBandpass.setBandpass(audioSampleRate, 700, 300);
     this.agc = new AudioAgc();
+
+    // Advanced filters
+    this.anr = new AdaptiveNoiseReduction();
+    this.notchFilter = new BiquadFilter();
+    this.notchFilter.setNotch(audioSampleRate, 1000, 15);
+    this.bandpassFilter = new BiquadFilter();
+    this.bandpassFilter.setBandpassQ(audioSampleRate, 1500, 1.2);
+    this.rumbleHighpass = new BiquadFilter();
+    this.rumbleHighpass.setHighpass(audioSampleRate, 80, 0.707); // 80 Hz wireless mic rumble cut
+  }
+
+  configureNotch(sampleRate: number, notchFreqHz: number, q: number): void {
+    this.notchFilter.setNotch(sampleRate, notchFreqHz, q);
+  }
+
+  configureBandpass(sampleRate: number, centerHz: number, q: number): void {
+    this.bandpassFilter.setBandpassQ(sampleRate, centerHz, q);
   }
 
   reset(): void {
@@ -129,6 +253,10 @@ export class Demodulator {
     this.deEmphasis.reset();
     this.audioLowpass.reset();
     this.cwBandpass.reset();
+    this.anr.reset();
+    this.notchFilter.reset();
+    this.bandpassFilter.reset();
+    this.rumbleHighpass.reset();
   }
 
   /**
@@ -145,7 +273,6 @@ export class Demodulator {
     switch (mode) {
       case 'WFM': {
         // Polar discriminator (instantaneous phase derivative)
-        // dPhase = atan2(I*Qprev - Q*Iprev, I*Iprev + Q*Qprev)
         const num = i * this.prevQ - q * this.prevI;
         const den = i * this.prevI + q * this.prevQ;
         const dPhase = Math.atan2(num, den);
@@ -202,6 +329,21 @@ export class Demodulator {
         audio = this.cwBandpass.process(mixed) * 2.5;
         break;
       }
+    }
+
+    // Apply Configurable Notch Filter if enabled
+    if (this.notchEnabled) {
+      audio = this.notchFilter.process(audio);
+    }
+
+    // Apply Wireless Mic Rumble Filter (80 Hz cut) if enabled
+    if (this.rumbleEnabled) {
+      audio = this.rumbleHighpass.process(audio);
+    }
+
+    // Apply Adaptive Noise Reduction (ANR) if enabled
+    if (this.anr.enabled) {
+      audio = this.anr.process(audio);
     }
 
     if (enableAgc) {

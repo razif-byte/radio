@@ -41,6 +41,10 @@ export class DspEngine {
   private mode: DemodulationMode = 'WFM';
   private agcEnabled = true;
 
+  // Wireless Mic & Line-In Preamp
+  private wirelessMicBoostDb = 0;
+  private wirelessMicLinearGain = 1.0;
+
   // Audio recording tap callback
   public onAudioSampleCallback?: (sample: number) => void;
 
@@ -148,11 +152,29 @@ export class DspEngine {
     this.agcEnabled = enabled;
   }
 
+  // --- ADVANCED DIGITAL FILTERS CONFIGURATION ---
+  setAnr(enabled: boolean, level: number = 5): void {
+    this.demodulator.anr.enabled = enabled;
+    this.demodulator.anr.setLevel(level);
+  }
+
+  setNotch(enabled: boolean, freqHz: number = 1000, q: number = 15): void {
+    this.demodulator.notchEnabled = enabled;
+    this.demodulator.configureNotch(this.audioSampleRate, freqHz, q);
+  }
+
+  setBandpassQ(centerHz: number, q: number): void {
+    this.demodulator.configureBandpass(this.audioSampleRate, centerHz, q);
+  }
+
+  setWirelessMicOptions(boostDb: number, rumbleCut: boolean): void {
+    this.wirelessMicBoostDb = boostDb;
+    this.wirelessMicLinearGain = Math.pow(10, boostDb / 20);
+    this.demodulator.rumbleEnabled = rumbleCut;
+  }
+
   /**
    * Process a batch of raw complex IQ samples from an SDR receiver.
-   * @param iSamples In-Phase float samples
-   * @param qSamples Quadrature float samples
-   * @param sdrSampleRate Sample rate of the input SDR stream
    */
   processIqBatch(iSamples: Float32Array, qSamples: Float32Array, sdrSampleRate: number): void {
     const numSamples = Math.min(iSamples.length, qSamples.length);
@@ -164,7 +186,6 @@ export class DspEngine {
       sumSq += iSamples[k] * iSamples[k] + qSamples[k] * qSamples[k];
     }
     const rms = Math.sqrt(sumSq / numSamples);
-    // Calibrated dBm representation: 0 dBFS ≈ -10 dBm
     const currentDbm = 10 * Math.log10(Math.max(rms * rms, 1e-12)) - 10;
     this.currentPowerDbm = 0.85 * this.currentPowerDbm + 0.15 * currentDbm;
 
@@ -173,7 +194,6 @@ export class DspEngine {
     this.currentSnrDb = Math.max(0, this.currentPowerDbm - noiseFloorDbm);
 
     // Compute S-meter (S9 = -73 dBm, 6 dB per S-unit)
-    // S0 = -127 dBm, S9 = -73 dBm
     let sVal = Math.floor((this.currentPowerDbm - (-127)) / 6);
     sVal = Math.max(0, Math.min(9, sVal));
     this.currentSmeter = sVal;
@@ -194,12 +214,12 @@ export class DspEngine {
     }
     this.fft.calculatePowerSpectrum(this.fftReal, this.fftImag, this.spectrumDb, noiseFloorDbm);
 
-    // Spectrum smoothing (video averaging)
+    // Spectrum smoothing
     for (let s = 0; s < this.fftSize; s++) {
       this.smoothedSpectrumDb[s] = 0.65 * this.smoothedSpectrumDb[s] + 0.35 * this.spectrumDb[s];
     }
 
-    // 3. Demodulation and decimation to audio rate (48 kHz)
+    // 3. Demodulation and decimation to audio rate (48 kHz) with advanced digital filtering
     const decimation = Math.max(1, Math.round(sdrSampleRate / this.audioSampleRate));
     for (let idx = 0; idx < numSamples; idx += decimation) {
       const iVal = iSamples[idx];
@@ -216,17 +236,34 @@ export class DspEngine {
   }
 
   /**
-   * Directly ingest a block of analog audio samples (e.g. from 3.5mm line-in).
+   * Directly ingest a block of analog audio samples (from 3.5mm line-in or wireless mic receiver).
+   * Applies wireless mic boost, rumble cut, notch filter, and ANR.
    */
   processAnalogAudioBatch(audioData: Float32Array): void {
     let sumSq = 0;
     const len = audioData.length;
     for (let k = 0; k < len; k++) {
-      const s = audioData[k];
+      let s = audioData[k] * this.wirelessMicLinearGain;
+
+      // Wireless mic rumble filter (80 Hz cut)
+      if (this.demodulator.rumbleEnabled) {
+        s = this.demodulator.rumbleHighpass.process(s);
+      }
+
+      // Notch filter
+      if (this.demodulator.notchEnabled) {
+        s = this.demodulator.notchFilter.process(s);
+      }
+
+      // Adaptive Noise Reduction
+      if (this.demodulator.anr.enabled) {
+        s = this.demodulator.anr.process(s);
+      }
+
       sumSq += s * s;
       const nextWrite = (this.ringWriteIndex + 1) % this.ringBufferSize;
       if (nextWrite !== this.ringReadIndex) {
-        this.audioRingBuffer[this.ringWriteIndex] = s;
+        this.audioRingBuffer[this.ringWriteIndex] = Math.max(-1, Math.min(1, s));
         this.ringWriteIndex = nextWrite;
       }
     }
@@ -235,9 +272,9 @@ export class DspEngine {
     this.currentSnrDb = Math.max(0, this.currentPowerDbm - (-90));
     this.squelchOpen = true;
 
-    // Synthetic audio FFT for line-in
+    // Line-in audio FFT
     for (let idx = 0; idx < this.fftSize; idx++) {
-      this.fftReal[idx] = idx < len ? audioData[idx] : 0;
+      this.fftReal[idx] = idx < len ? audioData[idx] * this.wirelessMicLinearGain : 0;
       this.fftImag[idx] = 0;
     }
     this.fft.calculatePowerSpectrum(this.fftReal, this.fftImag, this.spectrumDb, -90);

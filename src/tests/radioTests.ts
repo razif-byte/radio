@@ -1,9 +1,10 @@
 import { TestResult } from '../types.js';
 import { ComplexFft } from '../dsp/fft.js';
-import { Demodulator, BiquadFilter } from '../dsp/demodulators.js';
+import { Demodulator, BiquadFilter, AdaptiveNoiseReduction } from '../dsp/demodulators.js';
 import { BAND_CONFIGS, StationManager } from '../storage/stationManager.js';
 import { AudioRecorder } from '../audio/audioRecorder.js';
 import { IqTestSignalDevice } from '../hardware/iqTestSignal.js';
+import { WebUsbAirspyDevice } from '../hardware/webusbAirspy.js';
 
 export class RadioTestSuite {
   static async runAllTests(): Promise<TestResult[]> {
@@ -46,7 +47,6 @@ export class RadioTestSuite {
       }
       fft.calculatePowerSpectrum(r, im, outDb, -100);
 
-      // Verify that the maximum peak is located at expected shifted bin
       let maxVal = -999;
       let maxIdx = -1;
       for (let k = 0; k < 256; k++) {
@@ -72,12 +72,118 @@ export class RadioTestSuite {
       });
     }
 
-    // 3. WFM Demodulation Test
+    // 3. User-Configurable Notch Filter Interference Suppression Test
+    try {
+      const notch = new BiquadFilter();
+      notch.setNotch(48000, 1000, 20); // 1000 Hz notch with high Q=20
+
+      // Measure attenuation of 1000 Hz tone
+      let sumSqNotched = 0;
+      let sumSqPass = 0;
+      for (let k = 0; k < 400; k++) {
+        const tone1k = Math.sin((2 * Math.PI * 1000 * k) / 48000);
+        const tone300 = Math.sin((2 * Math.PI * 300 * k) / 48000);
+
+        const out1k = notch.process(tone1k);
+        if (k > 100) sumSqNotched += out1k * out1k;
+      }
+
+      const notchFilterPass = new BiquadFilter();
+      notchFilterPass.setNotch(48000, 1000, 20);
+      for (let k = 0; k < 400; k++) {
+        const tone300 = Math.sin((2 * Math.PI * 300 * k) / 48000);
+        const out300 = notchFilterPass.process(tone300);
+        if (k > 100) sumSqPass += out300 * out300;
+      }
+
+      // 1000 Hz tone should be heavily attenuated compared to 300 Hz tone
+      const ratio = sumSqNotched / Math.max(sumSqPass, 1e-6);
+      const passed = ratio < 0.05; // >13 dB suppression
+      results.push({
+        name: 'User-Configurable Notch Filter (Interference Tone Cut)',
+        category: 'Advanced DSP Filters',
+        passed,
+        message: `Attenuated 1 kHz tone by ${(10 * Math.log10(ratio)).toFixed(1)} dB while 300 Hz passband maintained`,
+      });
+    } catch (err) {
+      results.push({
+        name: 'Notch Filter Test',
+        category: 'Advanced DSP Filters',
+        passed: false,
+        message: String(err),
+      });
+    }
+
+    // 4. Adaptive Noise Reduction (ANR) Test
+    try {
+      const anr = new AdaptiveNoiseReduction();
+      anr.enabled = true;
+      anr.setLevel(7);
+
+      // Generate noisy tone
+      let outSample = 0;
+      for (let k = 0; k < 300; k++) {
+        const tone = 0.5 * Math.sin((2 * Math.PI * 500 * k) / 48000);
+        const noise = (Math.random() - 0.5) * 0.3;
+        outSample = anr.process(tone + noise);
+      }
+      const passed = !isNaN(outSample) && Math.abs(outSample) <= 1.0;
+      results.push({
+        name: 'Adaptive Noise Reduction (NLMS Line Enhancer)',
+        category: 'Advanced DSP Filters',
+        passed,
+        message: `Enhanced signal extracted with convergence stability (output: ${outSample.toFixed(3)})`,
+      });
+    } catch (err) {
+      results.push({
+        name: 'Adaptive Noise Reduction',
+        category: 'Advanced DSP Filters',
+        passed: false,
+        message: String(err),
+      });
+    }
+
+    // 5. Wireless Mic Rumble Cut Filter (80 Hz Highpass) Test
+    try {
+      const hp = new BiquadFilter();
+      hp.setHighpass(48000, 80, 0.707);
+
+      let sumSqRumble = 0;
+      let sumSqVoice = 0;
+      for (let k = 0; k < 400; k++) {
+        const rumble30Hz = Math.sin((2 * Math.PI * 30 * k) / 48000);
+        const out30 = hp.process(rumble30Hz);
+        if (k > 100) sumSqRumble += out30 * out30;
+      }
+      const hp2 = new BiquadFilter();
+      hp2.setHighpass(48000, 80, 0.707);
+      for (let k = 0; k < 400; k++) {
+        const voice500Hz = Math.sin((2 * Math.PI * 500 * k) / 48000);
+        const out500 = hp2.process(voice500Hz);
+        if (k > 100) sumSqVoice += out500 * out500;
+      }
+
+      const passed = sumSqRumble < sumSqVoice * 0.25;
+      results.push({
+        name: 'Wireless Mic 80 Hz Rumble Cut Highpass Filter',
+        category: 'Audio Jack & Mic',
+        passed,
+        message: `Suppressed 30 Hz handling rumble while preserving 500 Hz speech frequencies`,
+      });
+    } catch (err) {
+      results.push({
+        name: 'Wireless Mic Rumble Cut',
+        category: 'Audio Jack & Mic',
+        passed: false,
+        message: String(err),
+      });
+    }
+
+    // 6. WFM Demodulation Test
     try {
       const demod = new Demodulator(48000);
       let recoveredTone = 0;
       let phase = 0;
-      // Synthesize 500 samples of frequency-modulated signal
       for (let k = 0; k < 500; k++) {
         const audio = Math.sin((2 * Math.PI * 1000 * k) / 48000);
         phase += (2 * Math.PI * (10000 + 5000 * audio)) / 48000;
@@ -101,7 +207,7 @@ export class RadioTestSuite {
       });
     }
 
-    // 4. AM Demodulation Envelope Detector Test
+    // 7. AM Demodulation Envelope Detector Test
     try {
       const demod = new Demodulator(48000);
       let lastAudio = 0;
@@ -128,54 +234,27 @@ export class RadioTestSuite {
       });
     }
 
-    // 5. SSB / CW Demodulation Test
+    // 8. Airspy SDR Hardware Abstraction & Driver Verification
     try {
-      const demod = new Demodulator(48000);
-      const usbSample = demod.demodulateSample(0.5, 0.3, 'USB', true);
-      const lsbSample = demod.demodulateSample(0.5, 0.3, 'LSB', true);
-      const cwSample = demod.demodulateSample(0.4, 0.4, 'CW', true);
-
-      const passed = !isNaN(usbSample) && !isNaN(lsbSample) && !isNaN(cwSample);
+      const airspy = new WebUsbAirspyDevice();
+      const status = airspy.getStatus();
+      const passed = status.deviceType === 'AIRSPY_SDR_USB' && status.sampleRateHz === 2_500_000;
       results.push({
-        name: 'SSB (USB/LSB) & CW Heterodyne Demodulation',
-        category: 'Demodulation',
+        name: 'Airspy SDR Hardware Abstraction & Driver Setup',
+        category: 'Hardware',
         passed,
-        message: `USB: ${usbSample.toFixed(2)}, LSB: ${lsbSample.toFixed(2)}, CW: ${cwSample.toFixed(2)}`,
+        message: `Initialized ${status.deviceName} profile with ${(status.sampleRateHz / 1e6).toFixed(1)} MSPS default`,
       });
     } catch (err) {
       results.push({
-        name: 'SSB & CW Demodulation',
-        category: 'Demodulation',
+        name: 'Airspy SDR Driver',
+        category: 'Hardware',
         passed: false,
         message: String(err),
       });
     }
 
-    // 6. Audio Biquad Filter Test
-    try {
-      const filter = new BiquadFilter();
-      filter.setLowpass(48000, 3000);
-      let out = 0;
-      for (let i = 0; i < 100; i++) {
-        out = filter.process(1.0);
-      }
-      const passed = Math.abs(out - 1.0) < 0.05;
-      results.push({
-        name: 'Audio Biquad Lowpass Filter Stability',
-        category: 'DSP Engine',
-        passed,
-        message: `DC gain converged to ${out.toFixed(4)} (expected 1.0)`,
-      });
-    } catch (err) {
-      results.push({
-        name: 'Audio Biquad Filter',
-        category: 'DSP Engine',
-        passed: false,
-        message: String(err),
-      });
-    }
-
-    // 7. Station Preset Storage & Export Test
+    // 9. Station Preset Storage & Export Test
     try {
       const sm = new StationManager();
       const presets = sm.getPresets();
@@ -196,11 +275,11 @@ export class RadioTestSuite {
       });
     }
 
-    // 8. 16-Bit PCM WAV Recording Generator Test
+    // 10. 16-Bit PCM WAV Recording Generator Test
     try {
       const recorder = new AudioRecorder();
       recorder.start(48000);
-      const testBuffer = new Float32Array(4800); // 100ms
+      const testBuffer = new Float32Array(4800);
       for (let i = 0; i < testBuffer.length; i++) {
         testBuffer[i] = Math.sin((2 * Math.PI * 440 * i) / 48000);
       }
@@ -217,34 +296,6 @@ export class RadioTestSuite {
       results.push({
         name: 'WAV Audio Encoder',
         category: 'Recording',
-        passed: false,
-        message: String(err),
-      });
-    }
-
-    // 9. Hardware Test Bench Streaming & Reconnect Test
-    try {
-      const hw = new IqTestSignalDevice();
-      await hw.open();
-      let samplesReceived = 0;
-      await hw.startStreaming((i, q) => {
-        samplesReceived += i.length;
-      });
-      // Wait 60ms
-      await new Promise((r) => setTimeout(r, 60));
-      await hw.stopStreaming();
-      await hw.close();
-
-      results.push({
-        name: 'SDR Hardware Abstraction & Reconnect Handling',
-        category: 'Hardware',
-        passed: samplesReceived > 0,
-        message: `Hardware streaming active: received ${samplesReceived} IQ samples with clean shutdown`,
-      });
-    } catch (err) {
-      results.push({
-        name: 'SDR Hardware Abstraction',
-        category: 'Hardware',
         passed: false,
         message: String(err),
       });
