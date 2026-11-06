@@ -1,0 +1,10 @@
+{
+  "name": "Smart Radio Tuner Professional",
+  "description": "Professional multi-band radio receiver and tuner (FM, AM, Shortwave) supporting external RTL-SDR USB hardware, analog line-in audio, real-time DSP, FFT spectrum analyzer, and waterfall display in immersive WebXR.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
